@@ -2,6 +2,57 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.22.12] - 2026-04-29
+
+**`sync --skip-failed` now classifies file-size and symlink rejections instead of bucketing them as UNKNOWN.**
+**Plus a full end-to-end test for the failure loop.**
+
+v0.22.9 shipped the headline classifier work: code-grouped breakdowns at sync time,
+DB-vs-YAML disambiguation, doctor surfaces both unacked and historical entries with
+`[CODE=N]` lines. v0.22.12 closes the last two coverage gaps that v0.22.9 left on
+the table:
+
+- **FILE_TOO_LARGE** now covers the three real production sites in
+  `src/core/import-file.ts:199, 352, 401` ("Content too large", "File too large",
+  "Code file too large"). On v0.22.9 these all bucketed as UNKNOWN — the same
+  silent-systemic-failure pattern that motivated the original issue.
+- **SYMLINK_NOT_ALLOWED** covers `src/core/import-file.ts:347` ("Skipping symlink").
+  Security-relevant rejection that operators should see.
+- **End-to-end failure-loop test** in `test/e2e/sync.test.ts` exercises the full
+  chain: broken file → sync blocks with grouped breakdown → `--skip-failed`
+  advances bookmark with grouped acknowledgement → second broken file → second
+  cycle. PostgreSQL-backed; verifies bookmark gating, JSONL state, dedup, and
+  summary aggregation. v0.22.9's coverage was unit-tests-only.
+
+Twelve total error codes ship in the classifier:
+`SLUG_MISMATCH`, `YAML_PARSE`, `YAML_DUPLICATE_KEY`, `DB_DUPLICATE_KEY`,
+`MISSING_OPEN`, `MISSING_CLOSE`, `NESTED_QUOTES`, `EMPTY_FRONTMATTER`,
+`NULL_BYTES`, `INVALID_UTF8`, `STATEMENT_TIMEOUT`, `FILE_TOO_LARGE`,
+`SYMLINK_NOT_ALLOWED`. Anything the regex set doesn't recognize falls through
+as `UNKNOWN`.
+
+### What this means for you
+
+If your brain rejects oversized files or symlinks, you now see those rejections
+in the doctor breakdown and at sync time grouped by code, instead of as
+`UNKNOWN`. Run `gbrain upgrade`. No manual action required.
+
+### Itemized changes
+
+#### Added
+- `FILE_TOO_LARGE` classifier code covering `src/core/import-file.ts:199, 352, 401`.
+- `SYMLINK_NOT_ALLOWED` classifier code covering `src/core/import-file.ts:347`.
+- Two new unit tests in `test/sync-failures.test.ts` pinning the new codes against
+  literal production message strings (`File too large (N bytes)`, `Skipping symlink: ...`).
+- `test/e2e/sync.test.ts` — new failure-loop test exercising broken-file → block →
+  `--skip-failed` → second cycle. Hermetic on developer machines (saves+restores
+  the user's real `~/.gbrain/sync-failures.jsonl`).
+
+## To take advantage of v0.22.12
+
+No manual action required. Run `gbrain upgrade`. The new `FILE_TOO_LARGE` and
+`SYMLINK_NOT_ALLOWED` classifier codes apply on the next `gbrain sync`.
+
 ## [0.22.11] - 2026-04-27
 
 **Storage tiering, finally working. Brains scaling past 100K files stop bloating git.**
@@ -172,7 +223,7 @@ If `gbrain sync` blocks with parse failures, the breakdown tells you what to fix
 - DB-layer error patterns (`DB_DUPLICATE_KEY`, `STATEMENT_TIMEOUT`) check BEFORE YAML patterns in the classifier, so Postgres errors don't get YAML-labeled.
 - Frontmatter regex patterns rewritten to match canonical messages from `collectValidationErrors()` (`File is empty...`, `No closing --- delimiter found`, `Frontmatter block is empty`) instead of aspirational code-token strings (`missing.*open`) that never appeared in practice.
 
-Closes #500. Eng-review plan: `~/.claude/plans/then-codex-synchronous-toucan.md` (codex outside-voice agreed on all 7 findings).
+Closes #500.
 
 ## [0.22.8] - 2026-04-28
 
@@ -321,8 +372,6 @@ Then point Claude Desktop, claude.ai/code, or any MCP client at `http://your-tun
 6. **If `gbrain serve --http` exits with "Postgres engine required":** PGLite is local-only by design. Either keep using stdio (`gbrain serve`) for local agents, or migrate to Postgres (`gbrain migrate --to supabase`).
 
 If anything breaks: `gbrain doctor`, `~/.gbrain/upgrade-errors.jsonl` (if present), and please file an issue at https://github.com/garrytan/gbrain/issues with both.
-
-
 
 ## [0.22.6.1] - 2026-04-26
 
